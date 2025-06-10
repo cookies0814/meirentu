@@ -41,7 +41,11 @@ def fetch_dom(url):
 
 
 def get_album_list(page_no):
-    url = BASE_URL if page_no == 1 else f"{BASE_URL}page/{page_no}/"
+    # meirentu pagination uses index/<num>.html for pages beyond the first
+    if page_no == 1:
+        url = BASE_URL
+    else:
+        url = urljoin(BASE_URL, f"index/{page_no}.html")
     soup = fetch_dom(url)
     cards = soup.select("li.i_list > a")
     entries = []
