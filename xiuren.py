@@ -3,23 +3,41 @@ import re
 import argparse
 import requests
 import time
+import random
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.progress import Progress
 from rich import print
 
+def get_total_pages():
+    """Fetch the first page and determine how many pagination pages exist."""
+    soup = fetch_dom(BASE_URL)
+    return max_page_no(soup)
+
 BASE_URL = "https://meirentu.cc/"
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/114.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "zh-CN,zh;q=0.9",
 }
+
+# persistent session with retry support
+session = requests.Session()
+adapter = requests.adapters.HTTPAdapter(max_retries=3)
+session.mount("http://", adapter)
+session.mount("https://", adapter)
+session.headers.update(HEADERS)
 
 
 def fetch_dom(url):
-    resp = requests.get(url, headers=HEADERS, timeout=10)
-    resp.raise_for_status()
-    return BeautifulSoup(resp.text, "html.parser")
+    with session.get(url, timeout=10) as resp:
+        resp.raise_for_status()
+        html = resp.text
+    return BeautifulSoup(html, "html.parser")
 
 
 def get_album_list(page_no):
@@ -91,7 +109,7 @@ def download_image(url, folder, idx, referer=None, retries=3):
         headers["Referer"] = referer
     for attempt in range(retries):
         try:
-            with requests.get(url, headers=headers, stream=True, timeout=10) as r:
+            with session.get(url, headers=headers, stream=True, timeout=10) as r:
                 r.raise_for_status()
                 with open(filename, "wb") as f:
                     for chunk in r.iter_content(1024):
@@ -129,6 +147,14 @@ def save_photos(title, photos, referer=None, max_workers=3):
 
 
 def main(start, end):
+    if end <= 0:
+        try:
+            print("[cyan]🔍 正在获取页面总数...[/cyan]")
+            end = get_total_pages()
+            print(f"[green]共 {end} 页[/green]")
+        except Exception as e:
+            print(f"[red]获取总页数失败: {e}[/red]")
+            return
     for page in range(start, end + 1):
         print(f"\n[bold blue]🔎 抓取第 {page} 页相册列表...[/bold blue]")
         try:
@@ -137,11 +163,14 @@ def main(start, end):
             print(f"[red]抓取失败: {e}[/red]")
             continue
 
+        time.sleep(random.uniform(0.5, 1.5))
+
         for album in albums:
             print(f"\n[white on blue]>>> 处理相册: {album['title']}[/white on blue]")
             try:
                 photo_links = get_all_photos(album)
                 save_photos(album["title"], photo_links, referer=album["url"])
+                time.sleep(random.uniform(0.5, 1.5))
             except Exception as e:
                 print(f"[red]相册失败: {album['title']} | {e}[/red]")
 
@@ -149,7 +178,7 @@ def main(start, end):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="抓取 meirentu.cc 图片")
     parser.add_argument("--start", type=int, default=1, help="起始页码")
-    parser.add_argument("--end", type=int, default=1, help="结束页码")
+    parser.add_argument("--end", type=int, default=0, help="结束页码(0表示抓取到最后一页)")
     args = parser.parse_args()
     try:
         main(args.start, args.end)
